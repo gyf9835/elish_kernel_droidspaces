@@ -190,12 +190,16 @@ REQ="$REQ IPV6 IPV6_MULTIPLE_TABLES IP6_NF_IPTABLES IP6_NF_FILTER IP6_NF_MANGLE"
 REQ="$REQ IP6_NF_NAT"
 REQ="$REQ MACVLAN USER_NS"
 
+# NF_NAT_MASQUERADE exists in 4.19 but is a Kconfig sub-choice that cannot
+# be forced on, the effective per-arch name is NF_NAT_MASQUERADE_IPV4
+# (already required above), so it is not checked at all.
+#
 # These names are from older/newer kernel generations than 4.19 and may not
 # exist in this tree at all. The upstream list is a cross-version superset:
 # NF_CONNTRACK_{IPV4,IPV6} were folded into NF_CONNTRACK back in 3.13, and
 # NETFILTER_XT_TARGET_MASQUERADE was renamed NF_NAT_MASQUERADE. Treat them as
 # optional -- report, do not fail -- but fail if they exist and are off.
-OPTIONAL="IP6_NF_TARGET_MASQUERADE NETFILTER_XT_TARGET_MASQUERADE NF_NAT_MASQUERADE NF_CONNTRACK_NETLINK NF_CONNTRACK_IPV4 NF_CONNTRACK_IPV6 NF_NAT_IPV6"
+OPTIONAL="IP6_NF_TARGET_MASQUERADE NETFILTER_XT_TARGET_MASQUERADE NF_CONNTRACK_NETLINK NF_CONNTRACK_IPV4 NF_CONNTRACK_IPV6 NF_NAT_IPV6"
 
 FAILED=""
 for opt in $REQ; do
