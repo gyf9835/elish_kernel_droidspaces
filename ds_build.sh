@@ -132,42 +132,92 @@ scripts/config --file out/.config \
     -e RTMM
 
 # ---------- DroidSpaces kernel requirements ----------
+# Full list from ravindu644/Droidspaces-OSS Documentation/Kernel-Configuration.md
+# (non-GKI 3.18-4.19 section). Order matters: dependencies are resolved by
+# olddefconfig afterwards, so we verify the RESULT and fail loudly if an
+# option silently fell back to =n.
 echo "[*] Enabling DroidSpaces kernel features..."
-scripts/config --file out/.config \
-    -e PID_NS \
-    -e USER_NS \
-    -e UTS_NS \
-    -e IPC_NS \
-    -e NET_NS \
-    -e CGROUPS \
-    -e CGROUP_PIDS \
-    -e CGROUP_DEVICE \
-    -e CGROUP_FREEZER \
-    -e CGROUP_SCHED \
-    -e CGROUP_BPF \
-    -e MEMCG \
-    -e NAMESPACES \
-    -e SECCOMP \
-    -e SECCOMP_FILTER \
-    -e OVERLAY_FS \
-    -e VETH \
-    -e BRIDGE \
-    -e TUN \
-    -e FUSE_FS \
-    -e TMPFS_POSIX_ACL \
-    -e DEVTMPFS \
-    -e DEVTMPFS_MOUNT
+
+# IPC mechanisms
+scripts/config --file out/.config -e SYSCTL -e SYSVIPC -e POSIX_MQUEUE
+# Core namespace support
+scripts/config --file out/.config -e NAMESPACES -e PID_NS -e UTS_NS -e IPC_NS
+# Seccomp
+scripts/config --file out/.config -e SECCOMP -e SECCOMP_FILTER
+# Control groups
+scripts/config --file out/.config -e CGROUPS -e CGROUP_DEVICE -e CGROUP_SCHED \
+    -e FAIR_GROUP_SCHED -e CGROUP_FREEZER -e CGROUP_NET_PRIO -e MEMCG -e MEMCG_SWAP \
+    -e CFS_BANDWIDTH -e CGROUP_PIDS -e CGROUP_CPUACCT
+# Filesystems / device nodes
+scripts/config --file out/.config -e DEVTMPFS -e DEVTMPFS_MOUNT -e OVERLAY_FS \
+    -e TMPFS_POSIX_ACL -e TMPFS_XATTR
+# Firmware loading
+scripts/config --file out/.config -e FW_LOADER -e FW_LOADER_USER_HELPER
+# DroidSpaces networking (NAT/none modes)
+scripts/config --file out/.config -e NET_NS -e VETH -e BRIDGE -e NETFILTER \
+    -e BRIDGE_NETFILTER -e NETFILTER_ADVANCED -e NF_CONNTRACK \
+    -e IP_NF_IPTABLES -e IP_NF_FILTER -e NF_NAT -e NF_TABLES \
+    -e IP_NF_TARGET_MASQUERADE -e NETFILTER_XT_TARGET_MASQUERADE \
+    -e NETFILTER_XT_TARGET_TCPMSS -e NETFILTER_XT_MATCH_ADDRTYPE \
+    -e NF_CONNTRACK_NETLINK -e NF_NAT_REDIRECT -e IP_ADVANCED_ROUTER \
+    -e IP_MULTIPLE_TABLES
+# legacy compat
+scripts/config --file out/.config -e NF_CONNTRACK_IPV4 -e NF_NAT_IPV4 -e IP_NF_NAT
+# IPv6 NAT (NAT66)
+scripts/config --file out/.config -e IPV6 -e IPV6_MULTIPLE_TABLES -e IP6_NF_IPTABLES \
+    -e IP6_NF_FILTER -e IP6_NF_MANGLE -e IP6_NF_NAT -e IP6_NF_TARGET_MASQUERADE \
+    -e NF_CONNTRACK_IPV6 -e NF_NAT_IPV6
+# Macvlan mode
+scripts/config --file out/.config -e MACVLAN
+# USER_NS: docker "unsafe procfs" fix
+scripts/config --file out/.config -e USER_NS
+# Must be OFF on older kernels or containers have no internet
+scripts/config --file out/.config -d ANDROID_PARANOID_NETWORK
 
 make $MAKE_ARGS olddefconfig >/dev/null
 
-echo "[*] Verifying DroidSpaces requirements..."
-for opt in PID_NS USER_NS CGROUP_PIDS OVERLAY_FS VETH; do
+echo "[*] Verifying DroidSpaces requirements against the RESULTING config..."
+REQ="SYSCTL SYSVIPC POSIX_MQUEUE NAMESPACES PID_NS UTS_NS IPC_NS SECCOMP SECCOMP_FILTER"
+REQ="$REQ CGROUPS CGROUP_DEVICE CGROUP_SCHED FAIR_GROUP_SCHED CGROUP_FREEZER"
+REQ="$REQ CGROUP_NET_PRIO MEMCG MEMCG_SWAP CFS_BANDWIDTH CGROUP_PIDS CGROUP_CPUACCT"
+REQ="$REQ DEVTMPFS OVERLAY_FS TMPFS_POSIX_ACL TMPFS_XATTR FW_LOADER FW_LOADER_USER_HELPER"
+REQ="$REQ NET_NS VETH BRIDGE NETFILTER BRIDGE_NETFILTER NETFILTER_ADVANCED NF_CONNTRACK"
+REQ="$REQ IP_NF_IPTABLES IP_NF_FILTER NF_NAT NF_TABLES IP_NF_TARGET_MASQUERADE"
+REQ="$REQ NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_TARGET_TCPMSS"
+REQ="$REQ NETFILTER_XT_MATCH_ADDRTYPE NF_CONNTRACK_NETLINK NF_NAT_REDIRECT"
+REQ="$REQ IP_ADVANCED_ROUTER IP_MULTIPLE_TABLES NF_CONNTRACK_IPV4 NF_NAT_IPV4 IP_NF_NAT"
+REQ="$REQ IPV6 IPV6_MULTIPLE_TABLES IP6_NF_IPTABLES IP6_NF_FILTER IP6_NF_MANGLE"
+REQ="$REQ IP6_NF_NAT IP6_NF_TARGET_MASQUERADE NF_CONNTRACK_IPV6 NF_NAT_IPV6"
+REQ="$REQ MACVLAN USER_NS"
+
+FAILED=""
+for opt in $REQ; do
     if grep -q "^CONFIG_${opt}=y" out/.config; then
         echo "  [ok] CONFIG_${opt}=y"
     else
-        echo "  [!] CONFIG_${opt} NOT enabled"
+        echo "  [!!] CONFIG_${opt} NOT enabled"
+        FAILED="$FAILED $opt"
     fi
 done
+
+if grep -q "^CONFIG_ANDROID_PARANOID_NETWORK=y" out/.config; then
+    echo "  [!!] CONFIG_ANDROID_PARANOID_NETWORK still =y (containers lose internet)"
+    FAILED="$FAILED ANDROID_PARANOID_NETWORK"
+else
+    echo "  [ok] CONFIG_ANDROID_PARANOID_NETWORK disabled"
+fi
+
+# FM_LOADER_COMPRESS: only exists on newer kernels, report but do not fail
+grep -q "^CONFIG_FW_LOADER_COMPRESS=y" out/.config \
+    && echo "  [ok] CONFIG_FW_LOADER_COMPRESS=y" \
+    || echo "  [--] CONFIG_FW_LOADER_COMPRESS unavailable (optional on 4.19)"
+
+if [ -n "$FAILED" ]; then
+    echo "[!] DroidSpaces MISSING:$FAILED"
+    echo "[!] Refusing to ship a kernel that cannot run containers."
+    exit 1
+fi
+echo "[+] All mandatory DroidSpaces options are enabled."
 
 echo "[*] Building kernel..."
 make $MAKE_ARGS -j$(nproc)
