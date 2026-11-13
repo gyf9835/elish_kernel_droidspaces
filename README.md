@@ -1,3 +1,165 @@
+> 🤖 **AI-GENERATED NOTICE / AI 生成声明**
+>
+> The changes described in this README — the `ds_build.sh` script, the CI workflow, the DroidSpaces kernel configuration set — were **written by an AI coding agent** (a DeepSeek model, driven through a CLI agent for [@gyf9835](https://github.com/gyf9835)) and were validated on real hardware (Xiaomi Pad 5 Pro `elish`, HyperOS 1.0.2.0.TKYCNXM). The upstream kernel source itself is **not** AI-generated: this repository is a fork of [liyafe1997/kernel_xiaomi_sm8250_mod](https://github.com/liyafe1997/kernel_xiaomi_sm8250_mod) and all kernel code belongs to its original authors.
+>
+> 本 README 描述的改动（`ds_build.sh` 脚本、CI 工作流、DroidSpaces 内核配置项）由 **AI 编码代理**（DeepSeek 模型，通过 CLI 代理为 [@gyf9835](https://github.com/gyf9835) 编写）完成，并在真机（小米平板 5 Pro `elish`，HyperOS 1.0.2.0.TKYCNXM）上验证通过。上游内核源码本身**不是** AI 生成的：本仓库 fork 自 [liyafe1997/kernel_xiaomi_sm8250_mod](https://github.com/liyafe1997/kernel_xiaomi_sm8250_mod)，所有内核代码版权归属原作者。
+
+---
+
+# elish_kernel_droidspaces
+
+A fork of [liyafe1997/kernel_xiaomi_sm8250_mod](https://github.com/liyafe1997/kernel_xiaomi_sm8250_mod) (branch `android15-lineage22-mod`) **modified to add DroidSpaces support for the Xiaomi Pad 5 Pro (`elish`)**.
+
+本仓库 fork 自 [liyafe1997/kernel_xiaomi_sm8250_mod](https://github.com/liyafe1997/kernel_xiaomi_sm8250_mod)（`android15-lineage22-mod` 分支），**修改目的是让小米平板 5 Pro（`elish`）支持 DroidSpaces**。
+
+## What this fork changes / 本 fork 改了什么
+
+Everything below is additive — the upstream kernel tree and its device drivers are untouched except for the DroidSpaces patches applied at build time.
+
+以下改动都是**叠加式**的 —— 上游内核树与设备驱动保持原样，仅在构建时应用 DroidSpaces 补丁。
+
+### 1. `ds_build.sh` — MIUI + KernelSU + DroidSpaces build script
+
+Derived from upstream `build.sh`, keeping its MIUI build path intact (this matters, see below) and adding the DroidSpaces kernel requirements.
+
+基于上游 `build.sh` 改写，**完整保留其 MIUI 构建路径**（这一点很关键，见下文），并加入 DroidSpaces 所需的内核选项。
+
+Added kernel options (upstream `elish_defconfig` had `CONFIG_PID_NS` disabled, which makes DroidSpaces unusable):
+
+新增的内核选项（上游 `elish_defconfig` 里 `CONFIG_PID_NS` 是关闭的，不开的话 DroidSpaces 根本无法工作）：
+
+```sh
+scripts/config --file out/.config \
+    -e PID_NS          -e USER_NS        -e UTS_NS         -e IPC_NS \
+    -e NET_NS          -e CGROUPS        -e CGROUP_PIDS    -e CGROUP_DEVICE \
+    -e CGROUP_FREEZER  -e CGROUP_SCHED   -e CGROUP_BPF     -e MEMCG \
+    -e NAMESPACES      -e SECCOMP        -e SECCOMP_FILTER \
+    -e OVERLAY_FS      -e VETH           -e BRIDGE         -e TUN \
+    -e FUSE_FS         -e TMPFS_POSIX_ACL -e DEVTMPFS      -e DEVTMPFS_MOUNT
+```
+
+`BRIDGE`, `TUN`, `VETH`, `OVERLAY_FS`, `FUSE_FS` and `MEMCG` are already enabled upstream; they are set explicitly so the build fails loudly rather than silently if that ever changes.
+
+`BRIDGE`、`TUN`、`VETH`、`OVERLAY_FS`、`FUSE_FS`、`MEMCG` 上游本来就是开的，这里显式再设一遍，这样将来上游若改动，构建会直接暴露而不是静默失败。
+
+Build-time patches downloaded from [ravindu644/Droidspaces-OSS](https://github.com/ravindu644/Droidspaces-OSS) (`…/Documentation/resources/kernel-patches/non-GKI/`), applied idempotently:
+
+构建时从 [ravindu644/Droidspaces-OSS](https://github.com/ravindu644/Droidspaces-OSS) 下载补丁（`…/Documentation/resources/kernel-patches/non-GKI/`），幂等应用：
+
+| Patch | Purpose |
+|---|---|
+| `01.fix_kernel_panic_in_xt_qtaguid.patch` | avoid a kernel panic in `xt_qtaguid` (auto-skipped if the file is absent) |
+| `02.fix_restore cgroup file prefix handling .patch` | fix cgroup file prefix handling |
+
+Unchanged from upstream `build.sh`: SukiSU setup (`liyafe1997/SukiSU-Ultra` pinned commit), SUSFS config set, `KPM` + `patch_linux` 0.12.0, the MIUI DTS panel-dimension `sed` block, the MIUI config set (`XIAOMI_MIUI`, `OVERLAY_FS`, `MIHW`, `MIGT`, `MILLET`, `PERF_*`, `STATIC_USERMODEHELPER_PATH=/system/bin/micd`), and the "**do not flash `dtbo`**" behaviour.
+
+与上游 `build.sh` 保持一致的部分：SukiSU 安装（`liyafe1997/SukiSU-Ultra` 固定 commit）、SUSFS 配置、`KPM` + `patch_linux` 0.12.0、MIUI 的 DTS 面板尺寸 `sed`、MIUI 专用配置集（`XIAOMI_MIUI`、`OVERLAY_FS`、`MIHW`、`MIGT`、`MILLET`、`PERF_*`、`STATIC_USERMODEHELPER_PATH=/system/bin/micd`），以及"**不刷 `dtbo`**"的行为。
+
+### 2. `.github/workflows/build.yml` — CI
+
+Builds the `elish` MIUI variant on `ubuntu-22.04` with proton-clang 20210522 and ccache, uploads the flashable zip **plus the build log and a config-evidence section** (so it is verifiable that `PID_NS` / `USER_NS` / `CGROUP_PIDS` / `OVERLAY_FS` / `VETH` really ended up `=y`).
+
+在 `ubuntu-22.04` 上用 proton-clang 20210522 + ccache 构建 `elish` 的 MIUI 版本，上传刷机包**以及构建日志和配置证据**（可核对 `PID_NS` / `USER_NS` / `CGROUP_PIDS` / `OVERLAY_FS` / `VETH` 是否真的是 `=y`）。
+
+## Build / 构建
+
+Locally:
+
+```sh
+# toolchain
+mkdir -p $HOME/proton-clang && cd $HOME/proton-clang
+wget https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.zip
+unzip 20210522.zip && cd -
+
+# deps (Debian/Ubuntu)
+sudo apt install build-essential git curl wget bison flex zip bc cpio \
+                 libssl-dev libelf-dev libncurses-dev ccache python-is-python3
+
+# build
+chmod +x ds_build.sh
+./ds_build.sh elish
+```
+
+Or push to the `android15-lineage22-mod` branch / trigger *Build elish Kernel (MIUI + SukiSU + DroidSpaces)* from the Actions tab.
+
+或者直接推到 `android15-lineage22-mod` 分支 / 在 Actions 页面手动触发 *Build elish Kernel (MIUI + SukiSU + DroidSpaces)*。
+
+Result: `Kernel_MIUI_elish_SukiSU-SUSFS_DroidSpaces_<date>_anykernel3_<commit>.zip`
+
+## Flashing / 刷入
+
+```sh
+adb reboot bootloader
+fastboot boot OrangeFox-*.img                # temporary boot, writes nothing
+adb push Kernel_MIUI_elish_*.zip /tmp/k.zip
+adb shell /system/bin/twrp install /tmp/k.zip
+adb reboot
+```
+
+The zip flashes `boot` only. **`dtbo`, `dtb`, `vbmeta` and `vendor_boot` are left alone** — keep the stock ones.
+
+ZIP **只刷 `boot`**。**`dtbo`、`dtb`、`vbmeta`、`vendor_boot` 一律不动**，保持原厂。
+
+To go back:
+
+```sh
+fastboot flash boot_a <stock>/boot.img
+```
+
+## Verified on hardware / 真机验证结果
+
+Xiaomi Pad 5 Pro (`elish`), HyperOS `OS1.0.2.0.TKYCNXM` / `V816.0.2.0.TKYCNXM` (Android 13, A/B, slot `a`):
+
+| Item | Result |
+|---|---|
+| Kernel | `4.19.325-20261113-81723d62-perf+` (Proton clang 13) |
+| Boot | clean, no "device has a problem" popup |
+| Launcher / Settings / Notes / App Store scaling | **correct**, `wm density` = 360, 1600×2560 |
+| KernelSU | SukiSU working (`Built-in`), SukiSU Manager **3.2.0** required |
+| SuSFS | v1.5.7 (Manual Hook) |
+| KPM | supported (3072) |
+| DroidSpaces kernel requirements | `PID_NS` / `USER_NS` / `CGROUP_PIDS` / `OVERLAY_FS` / `VETH` = `y` |
+
+## Use SukiSU Manager 3.2.0 / 请使用 SukiSU 管理器 3.2.0
+
+Same constraint as upstream: the SukiSU version in this kernel does **not** work with managers 4.0+. Install [SukiSU 3.2.0](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases/tag/v3.2.0). `ReSukiSU` and `KernelSU` official managers are **not** compatible with this kernel — if *root* seems missing, check which manager is installed first.
+
+与上游相同的限制：内核内的 SukiSU 版本**不兼容 4.0+ 的管理器**，请安装 [SukiSU 3.2.0](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases/tag/v3.2.0)。`ReSukiSU` 和官方 `KernelSU` 管理器**不兼容**本内核 —— 如果觉得"没有 root"，请先确认装的是哪个管理器。
+
+## Do not flash `dtbo.img` / 不要刷 `dtbo`
+
+Upstream ships no `dtbo.img` and this fork keeps that. A related kernel tree ships a ~486 KB `dtbo.img` that overwrites the 33.5 MB stock one and causes system-app scaling breakage — see [AstideLabs#68](https://github.com/AstideLabs/android_kernel_xiaomi_sm8250/issues/68) (test report posted there, AI-written — DeepSeek). If you ever flashed another third-party kernel, restore the stock `dtbo`:
+
+```sh
+fastboot flash dtbo_a <stock>/dtbo.img
+```
+
+上游本身就不带 `dtbo.img`，本 fork 保持这一点。相关的另一棵内核树会附带一个约 486 KB 的 `dtbo.img`，覆盖掉原厂 33.5 MB 的版本并导致系统应用缩放异常 —— 见 [AstideLabs#68](https://github.com/AstideLabs/android_kernel_xiaomi_sm8250/issues/68)（其中的测试报告由 AI 编写）。如果你之前刷过其它第三方内核，恢复原厂 `dtbo`：
+
+```sh
+fastboot flash dtbo_a <stock>/dtbo.img
+```
+
+## Credits / 致谢
+
+- [@liyafe1997](https://github.com/liyafe1997) — the base kernel, build script and MIUI adaptation. **This fork would not boot correctly without his MIUI DTS/config work.**
+- [LineageOS](https://github.com/LineageOS/android_kernel_xiaomi_sm8250) — kernel base
+- [@UtsavBalar1231](https://github.com/UtsavBalar1231) — MIUI feature code and drivers
+- [SukiSU-Ultra](https://github.com/SukiSU-Ultra), [Sidex15/susfs4ksu](https://github.com/Sidex15/susfs4ksu-module) — root / SUSFS
+- [@ravindu644 / Droidspaces-OSS](https://github.com/ravindu644/Droidspaces-OSS) — DroidSpaces kernel patches
+- [@osm0sis](https://github.com/osm0sis) — AnyKernel3
+
+## Original upstream README
+
+The original upstream README is preserved below for reference (device list, features, build guide).
+
+原始上游 README 保留在下方供参考（支持机型列表、特性、构建指南）。
+
+---
+
+<details>
+<summary>Upstream README (unchanged) / 上游 README（原样保留）</summary>
+
 [☕Buy me a coffee](https://ko-fi.com/strawing)
 # Notice / 注意
 For SukiSU users: Please use [SukiSU Manager 3.2.0](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases/tag/v3.2.0), 4.0 and above are not supported yet of the SukiSU version in this kernel.
@@ -153,3 +315,5 @@ Release里的编译好的内核成品由`android15-lineage22-mod`分支编译，
     And also, here is a `buildall.sh` can build for all supported models at once.
 
 
+
+</details>
