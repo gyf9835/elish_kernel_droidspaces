@@ -1,0 +1,83 @@
+name: Build elish Kernel (MIUI + SukiSU + DroidSpaces)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ android15-lineage22-mod ]
+    paths:
+      - 'ds_build.sh'
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up environment
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex zip unzip cpio wget curl \
+            libssl-dev libelf-dev libncurses-dev git python3 ccache rsync \
+            python-is-python3
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache_mikernel
+          key: elish-ccache-${{ github.sha }}
+          restore-keys: |
+            elish-ccache-
+
+      - name: Download proton-clang 20210522
+        run: |
+          mkdir -p $HOME/proton-clang
+          cd $HOME/proton-clang
+          for i in 1 2 3; do
+            wget -q --tries=3 --timeout=60 \
+              https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.zip && break
+            echo "retry $i"; sleep 10
+          done
+          unzip -q 20210522.zip
+          ls -d proton-clang-20210522/bin && $HOME/proton-clang/proton-clang-20210522/bin/clang --version | head -3
+
+      - name: Build kernel
+        run: |
+          chmod +x ds_build.sh
+          set -o pipefail
+          ./ds_build.sh elish 2>&1 | tee build.log
+
+      - name: Collect config evidence
+        if: always()
+        run: |
+          echo "===== key configs ====="
+          for o in PID_NS USER_NS CGROUP_PIDS OVERLAY_FS VETH KSU KPM XIAOMI_MIUI STATIC_USERMODEHELPER_PATH; do
+            grep -E "^CONFIG_${o}=|^CONFIG_${o} is not set|^CONFIG_${o}=\"" out/.config 2>/dev/null || echo "CONFIG_${o}: (absent)"
+          done
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: elish-miui-droidspaces-${{ github.run_id }}
+          path: Kernel_MIUI_elish_*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_id }}
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
