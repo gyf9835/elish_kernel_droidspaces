@@ -38,7 +38,7 @@ scripts/config --file out/.config \
     -e FUSE_FS         -e TMPFS_POSIX_ACL -e DEVTMPFS      -e DEVTMPFS_MOUNT
 ```
 
-`BRIDGE`, `TUN`, `VETH`, `OVERLAY_FS`, `FUSE_FS` and `MEMCG` are already enabled upstream; they are set explicitly so the build fails loudly rather than silently if that ever changes.
+Most of these are **not** enabled by the upstream defconfig (“PID_NS was disabled upstream” understates it: `SYSVIPC`, `POSIX_MQUEUE`, `IPC_NS`, `DEVTMPFS`, `CGROUP_PIDS`, `CFS_BANDWIDTH`, `MACVLAN`, `USER_NS` were all off too). Everything is therefore set explicitly **and verified after `olddefconfig`**, because Kconfig dependencies can silently revert an option to `=n`.
 
 `BRIDGE`、`TUN`、`VETH`、`OVERLAY_FS`、`FUSE_FS`、`MEMCG` 上游本来就是开的，这里显式再设一遍，这样将来上游若改动，构建会直接暴露而不是静默失败。
 
@@ -112,13 +112,43 @@ Xiaomi Pad 5 Pro (`elish`), HyperOS `OS1.0.2.0.TKYCNXM` / `V816.0.2.0.TKYCNXM` (
 
 | Item | Result |
 |---|---|
-| Kernel | `4.19.325-20261113-81723d62-perf+` (Proton clang 13) |
+| Kernel | `4.19.325-20261113-ca4a71ee-perf+` (Proton clang 13) |
+| Build | GitHub Actions run `43411197975`, `kernel_size` 23.5 MB zip, flashes `boot` only |
 | Boot | clean, no "device has a problem" popup |
 | Launcher / Settings / Notes / App Store scaling | **correct**, `wm density` = 360, 1600×2560 |
 | KernelSU | SukiSU working (`Built-in`), SukiSU Manager **3.2.0** required |
 | SuSFS | v1.5.7 (Manual Hook) |
 | KPM | supported (3072) |
-| DroidSpaces kernel requirements | `PID_NS` / `USER_NS` / `CGROUP_PIDS` / `OVERLAY_FS` / `VETH` = `y` |
+| DroidSpaces app | **7.2.0** — reports the kernel as **supported** (backend installed, DAEMON badge), no "kernel not supported" banner |
+| DroidSpaces config | all 60 mandatory options verified `=y` at build time (see below) |
+
+### DroidSpaces options that are actually checked
+
+The build now **fails** if any of these end up `=n` after `olddefconfig`:
+
+```
+SYSCTL SYSVIPC POSIX_MQUEUE NAMESPACES PID_NS UTS_NS IPC_NS SECCOMP SECCOMP_FILTER
+CGROUPS CGROUP_DEVICE CGROUP_SCHED FAIR_GROUP_SCHED CGROUP_FREEZER CGROUP_NET_PRIO
+MEMCG MEMCG_SWAP CFS_BANDWIDTH CGROUP_PIDS CGROUP_CPUACCT DEVTMPFS OVERLAY_FS
+TMPFS_POSIX_ACL TMPFS_XATTR FW_LOADER FW_LOADER_USER_HELPER NET_NS VETH BRIDGE
+NETFILTER BRIDGE_NETFILTER NETFILTER_ADVANCED NF_CONNTRACK IP_NF_IPTABLES
+IP_NF_FILTER NF_NAT NF_TABLES IP_NF_TARGET_MASQUERADE NETFILTER_XT_TARGET_TCPMSS
+NETFILTER_XT_MATCH_ADDRTYPE NF_NAT_REDIRECT NF_NAT_MASQUERADE_IPV4 IP_ADVANCED_ROUTER
+IP_MULTIPLE_TABLES IP_NF_NAT IPV6 IPV6_MULTIPLE_TABLES IP6_NF_IPTABLES IP6_NF_FILTER
+IP6_NF_MANGLE IP6_NF_NAT MACVLAN USER_NS
+```
+
+plus `ANDROID_PARANOID_NETWORK` must be **off** (otherwise containers have no internet).
+
+Five names from the upstream cross-version list do not exist on 4.19 and are
+reported but not enforced: `NETFILTER_XT_TARGET_MASQUERADE`, `NF_NAT_MASQUERADE`,
+`NF_CONNTRACK_NETLINK`, `NF_CONNTRACK_IPV4`, `NF_CONNTRACK_IPV6`
+(folded into `NF_CONNTRACK` / renamed since 3.13).
+
+> First attempt (commit `bfa050c1`) enabled only 24 options and let
+> `olddefconfig` silently revert `SYSVIPC`, `DEVTMPFS`, `PID_NS`, `CGROUP_PIDS`
+> and friends, which is why DroidSpaces 7.2.0 reported "kernel not supported".
+> The verification step above is what caught it.
 
 ## Use SukiSU Manager 3.2.0 / 请使用 SukiSU 管理器 3.2.0
 
