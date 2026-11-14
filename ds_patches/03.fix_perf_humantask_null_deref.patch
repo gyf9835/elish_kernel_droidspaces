@@ -1,0 +1,48 @@
+Fix kernel panic in __set_task_comm with CONFIG_PERF_HUMANTASK
+
+find_task_by_vpid() was called without RCU protection and without a
+NULL check, then parent->comm was dereferenced unconditionally.
+When a process setns()es into another PID namespace (DroidSpaces
+container start) and execve()s, tsk->tgid cannot be resolved in the
+active namespace, so find_task_by_vpid() returns NULL and
+strcmp(parent->comm) dereferences NULL + offsetof(task_struct, comm)
+= 0x840 (pc __pi_strcmp, lr __set_task_comm, Process [ds-monitor]),
+panic and device reboot.
+
+Guard the lookup with rcu_read_lock() and skip the boost when the
+parent cannot be resolved or is not system_server. Semantics for the
+normal Android case are unchanged.
+
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -1255,13 +1255,28 @@
+ void __set_task_comm(struct task_struct *tsk, const char *buf, bool exec)
+ {
+ #ifdef CONFIG_PERF_HUMANTASK
+-	struct task_struct *parent = find_task_by_vpid(tsk->tgid);
++	struct task_struct *parent;
+ 	char *tmpbuf = kmalloc(128, GFP_KERNEL);
+ #endif
+ 	task_lock(tsk);
+ 
+ #ifdef CONFIG_PERF_HUMANTASK
+-	if (!strcmp(parent->comm, "system_server")) {
++	/*
++	 * find_task_by_vpid() must be called under RCU read lock, and it may
++	 * return NULL: after setns() into another PID namespace (e.g. Linux
++	 * containers like DroidSpaces), tsk->tgid is not resolvable in the
++	 * active namespace. Dereferencing parent without a NULL check caused
++	 * a kernel panic (strcmp on parent->comm) on execve inside a
++	 * container. Filter parent under RCU and skip the boost if not
++	 * resolvable or not system_server.
++	 */
++	rcu_read_lock();
++	parent = find_task_by_vpid(tsk->tgid);
++	if (parent && strcmp(parent->comm, "system_server"))
++		parent = NULL;
++	rcu_read_unlock();
++
++	if (parent) {
+ 		if (!strcmp(buf, "InputDispatcher") ||
+ 		    !strcmp(buf, "InputReader")) {
+ 			tsk->human_task = MAX_LEVER + 1;
