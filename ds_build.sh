@@ -46,6 +46,23 @@ apply_patch() {
 apply_patch "$DS_TMP_DIR/01_fix_xt_qtaguid.patch"
 apply_patch "$DS_TMP_DIR/02_fix_cgroup_prefix.patch"
 
+# Fork-local: fix kernel panic in __set_task_comm (CONFIG_PERF_HUMANTASK
+# vendor code) when execve() runs after setns() into another PID namespace
+# (DroidSpaces container start): find_task_by_vpid() returned NULL and
+# strcmp(parent->comm) crashed the kernel. See ds_patches/03.
+LOCAL_PATCH="$(dirname "$0")/ds_patches/03.fix_perf_humantask_null_deref.patch"
+if patch -p1 --forward --dry-run < "$LOCAL_PATCH" >/dev/null 2>&1; then
+    patch -p1 --forward < "$LOCAL_PATCH"
+    echo "[+] applied: $(basename "$LOCAL_PATCH")"
+else
+    if grep -q 'if (parent && strcmp(parent->comm, "system_server"))' fs/exec.c; then
+        echo "[=] already applied: $(basename "$LOCAL_PATCH")"
+    else
+        echo "[!] FATAL: $(basename "$LOCAL_PATCH") failed to apply and fix is missing"
+        exit 1
+    fi
+fi
+
 # ---------- AnyKernel3 ----------
 rm -rf out anykernel
 git clone https://github.com/liyafe1997/AnyKernel3 -b kona --single-branch --depth=1 anykernel
